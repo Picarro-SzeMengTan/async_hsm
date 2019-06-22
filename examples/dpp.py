@@ -43,13 +43,13 @@ class Table(farc.Ahsm):
         self.fork = ["FREE",] * N_PHILO
         self.isHungry = [False,] * N_PHILO
 
-    @farc.Hsm.state
+    @farc.state
     def _initial(self, event):
         farc.Framework.subscribe("DONE", self)
         farc.Framework.subscribe("TERMINATE", self)
-        return self.tran(self, Table._serving)
+        return self.tran(self._serving)
 
-    @farc.Hsm.state
+    @farc.state
     def _serving(self, event):
         sig = event.signal
         if sig == farc.Signal.HUNGRY:
@@ -66,7 +66,7 @@ class Table(farc.Ahsm):
                 print(n, "eating")
             else:
                 self.isHungry[n] = True
-            return self.handled(self, event)
+            return self.handled(event)
 
         elif sig == farc.Signal.DONE:
             # BSP.busyDelay()
@@ -94,83 +94,83 @@ class Table(farc.Ahsm):
                 e = farc.Event(farc.Signal.EAT, m)
                 farc.Framework.publish(e)
                 print(m, "eating")
-            return self.handled(self, event)
+            return self.handled(event)
 
         elif sig == farc.Signal.TERMINATE:
             farc.Framework.stop()
 
-        return self.super(self, self.top)
+        return self.super(self.top)
 
 
 class Philo(farc.Ahsm):
 
-    @farc.Hsm.state
+    @farc.state
     def _initial(self, event):
         self.timeEvt = farc.TimeEvent("TIMEOUT")
         farc.Framework.subscribe("EAT", self)
-        return self.tran(self, Philo._thinking)
+        return self.tran(self._thinking)
 
-    @farc.Hsm.state
+    @farc.state
     def _thinking(self, event):
         sig = event.signal
         if sig == farc.Signal.ENTRY:
             self.timeEvt.postIn(self, THINK_TIME())
-            status = self.handled(self, event)
+            status = self.handled(event)
 
         elif sig == farc.Signal.TIMEOUT:
-            status = self.tran(self, Philo._hungry)
+            status = self.tran(self._hungry)
 
         elif sig == farc.Signal.EAT or sig == farc.Signal.DONE:
             assert event.value != PHILO_ID(self)
-            status = self.handled(self, event)
+            status = self.handled(event)
 
         else:
-            status = self.super(self, self.top)
+            status = self.super(self.top)
         return status
 
-    @farc.Hsm.state
+    @farc.state
     def _hungry(self, event):
         sig = event.signal
         if sig == farc.Signal.ENTRY:
             e = farc.Event(farc.Signal.HUNGRY, PHILO_ID(self))
             farc.Framework.post_by_name(e, "Table")
-            status = self.handled(self, event)
+            status = self.handled(event)
 
         elif sig == farc.Signal.EAT:
             if event.value == PHILO_ID(self):
-                status = self.tran(self,Philo._eating)
+                status = self.tran(self._eating)
             else:
-                status = self.super(self, self.top) # UNHANDLED
+                status = self.super(self.top) # UNHANDLED
 
         elif sig == farc.Signal.DONE:
             assert event.value != PHILO_ID(self)
-            status = self.handled(self, event)
+            status = self.handled(event)
 
         else:
-            status = self.super(self, self.top)
+            status = self.super(self.top)
         return status
 
-    @farc.Hsm.state
+    @farc.state
     def _eating(self, event):
         sig = event.signal
         if sig == farc.Signal.ENTRY:
             self.timeEvt.postIn(self, EAT_TIME())
-            status = self.handled(self, event)
+            status = self.handled(event)
 
         elif sig == farc.Signal.EXIT:
             e = farc.Event(farc.Signal.DONE, PHILO_ID(self))
             farc.Framework.publish(e)
-            status = self.handled(self, event)
+            status = self.handled(event)
 
         elif sig == farc.Signal.TIMEOUT:
-            status = self.tran(self,Philo._thinking)
+            status = self.tran(self._thinking)
 
         elif sig == farc.Signal.EAT or sig == farc.Signal.DONE:
             assert event.value != PHILO_ID(self)
-            status = self.handled(self, event)
+            status = self.handled(event)
 
         else:
-            status = self.super(self, self.top)
+            status = self.super(self.top)
         return status
 
 

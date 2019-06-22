@@ -12,45 +12,43 @@ class Iterate(farc.Ahsm):
         farc.Signal.register("ITERATE")
 
 
-    @farc.Hsm.state
-    def _initial(me, event):
+    @farc.state
+    def _initial(self, event):
         print("_initial")
-        me.iter_evt = farc.Event(farc.Signal.ITERATE, None)
-        return me.tran(me, Iterate._iterating)
+        self.iter_evt = farc.Event(farc.Signal.ITERATE, None)
+        return self.tran(self._iterating)
 
 
-    @farc.Hsm.state
-    def _iterating(me, event):
+    @farc.state
+    def _iterating(self, event):
         sig = event.signal
         if sig == farc.Signal.ENTRY:
             print("_iterating")
-            me.count = 10
-            me.postFIFO(me.iter_evt)
-            return me.handled(me, event)
+            self.count = 10
+            self.postFIFO(self.iter_evt)
+            return self.handled(event)
 
         elif sig == farc.Signal.ITERATE:
-            print(me.count)
+            print(self.count)
 
-            if me.count == 0:
-                return me.tran(me, Iterate._exiting)
+            if self.count == 0:
+                return self.tran(self._exiting)
             else:
                 # do work
-                me.count -= 1
-                me.postFIFO(me.iter_evt)
-                return me.handled(me, event)
+                self.count -= 1
+                self.postFIFO(self.iter_evt)
+                return self.handled(event)
+        return self.super(self.top)
 
-        return me.super(me, me.top)
 
-
-    @farc.Hsm.state
-    def _exiting(me, event):
+    @farc.state
+    def _exiting(self, event):
         sig = event.signal
         if sig == farc.Signal.ENTRY:
             print("_exiting")
             farc.Framework.stop()
-            return me.handled(me, event)
-
-        return me.super(me, me.top)
+            return self.handled(event)
+        return self.super(self.top)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,34 @@
 import asyncio
 import collections
+from copy import copy
+import math
 import signal
 import sys
+import typing
+from functools import wraps
+
+import attr
+
+
+@attr.s(auto_attribs=True)
+class Catch:
+    signal: str
+    handler: str
+
+
+@attr.s(auto_attribs=True)
+class State:
+    name: str
+    parent: typing.Optional[str]
+    catches: typing.List[Catch] = attr.Factory(list)
+
+
+@attr.s(auto_attribs=True)
+class HsmDescription:
+    initial: str
+    setup: typing.Optional[str]
+    signals: typing.List[str] = attr.Factory(list)
+    states: typing.List[State] = attr.Factory(list)
 
 
 class Spy(object):
@@ -24,7 +51,6 @@ class Spy(object):
         """
         Spy._actv_cls = spy_cls
         spy_cls.init()
-
 
     def __getattr__(*args):
         """Returns
@@ -54,15 +80,13 @@ class Signal(object):
     """
 
     _registry = {}  # signame:str to sigid:int
-    _lookup = []    # sigid:int to signame:str
-
+    _lookup = []  # sigid:int to signame:str
 
     @staticmethod
     def exists(signame):
         """Returns True if signame is in the Signal registry.
         """
         return signame in Signal._registry
-
 
     @staticmethod
     def register(signame):
@@ -80,7 +104,6 @@ class Signal(object):
             Spy.on_signal_register(signame, sigid)
             return sigid
 
-
     def __getattr__(self, signame):
         assert type(signame) is str
         return Signal._registry[signame]
@@ -91,17 +114,15 @@ class Signal(object):
 # This also prevents Signal() from creating a new instance.
 Signal = Signal()
 
-
 # Register the reserved (system) signals
-Signal.register("EMPTY") # 0
-Signal.register("ENTRY") # 1
+Signal.register("EMPTY")  # 0
+Signal.register("ENTRY")  # 1
 Signal.register("EXIT")  # 2
 Signal.register("INIT")  # 3
 
 # Signals that mirror POSIX signals
 Signal.register("SIGINT")  # (i.e. Ctrl+C)
-Signal.register("SIGTERM") # (i.e. kill <pid>)
-
+Signal.register("SIGTERM")  # (i.e. kill <pid>)
 
 Event = collections.namedtuple("Event", ["signal", "value"])
 
@@ -119,11 +140,30 @@ Event.EXIT = Event(Signal.EXIT, None)
 Event.INIT = Event(Signal.INIT, None)
 
 # Events for POSIX signals
-Event.SIGINT = Event(Signal.SIGINT, None)   # (i.e. Ctrl+C)
-Event.SIGTERM = Event(Signal.SIGTERM, None) # (i.e. kill <pid>)
+Event.SIGINT = Event(Signal.SIGINT, None)  # (i.e. Ctrl+C)
+Event.SIGTERM = Event(Signal.SIGTERM, None)  # (i.e. kill <pid>)
 
 # The order of this tuple MUST match their respective signals
 Event.reserved = (Event.EMPTY, Event.ENTRY, Event.EXIT, Event.INIT)
+
+
+def state(func):
+    """A decorator that identifies which methods are states.
+    The presence of the farc_state attr, not the value of the attr,
+    determines statehood.
+    The Spy debugging system uses the farc_state attribute
+    to determine which methods inside a class are actually states.
+    Other uses of the attribute may come in the future.
+    """
+
+    @wraps(func)
+    def func_wrap(self, evt):
+        result = func(self, evt)
+        Spy.on_state_handler_called(func_wrap, evt, result)
+        return result
+
+    setattr(func_wrap, "farc_state", True)
+    return func_wrap
 
 
 class Hsm(object):
@@ -140,9 +180,8 @@ class Hsm(object):
     RET_TRAN = 2
     RET_SUPER = 3
 
-
-    def __init__(self,):
-        """Sets this Hsm's current state to Hsm.top(), the default state
+    def __init__(self):
+        """Sets this Hsm's current state to self.top(), the default state
         and stores the given initial state.
         """
         # self.state is the Hsm/act's current active state.
@@ -153,8 +192,6 @@ class Hsm(object):
 
         # Farc differs from QP here in that we hardcode
         # the initial state to be "_initial"
-        self.initial_state = self._initial
-
 
     def _initial(self, event):
         """Raises a NotImplementedError to force the derived class
@@ -162,36 +199,33 @@ class Hsm(object):
         """
         raise NotImplementedError
 
-
-    def state(func):
-        """A decorator that identifies which methods are states.
-        The presence of the farc_state attr, not the value of the attr,
-        determines statehood.
-        The Spy debugging system uses the farc_state attribute
-        to determine which methods inside a class are actually states.
-        Other uses of the attribute may come in the future.
-        """
-        setattr(func, "farc_state", True)
-        return staticmethod(func)
-
     # Helper functions to process reserved events through the current state
-    @staticmethod
-    def trig(me, state_func, signal): return state_func(me, Event.reserved[signal])
-    @staticmethod
-    def enter(me, state_func): return state_func(me, Event.ENTRY)
-    @staticmethod
-    def exit(me, state_func): return state_func(me, Event.EXIT)
+    def trig(self, state_func, signal):
+        return state_func(Event.reserved[signal])
+
+    def enter(self, state_func):
+        return state_func(Event.ENTRY)
+
+    def exit(self, state_func):
+        return state_func(Event.EXIT)
 
     # Other helper functions
-    @staticmethod
-    def handled(me, event): return Hsm.RET_HANDLED
-    @staticmethod
-    def tran(me, nextState): me.state = nextState; return Hsm.RET_TRAN
-    @staticmethod
-    def super(me, superState): me.state = superState; return Hsm.RET_SUPER # p. 158
+    def handled(self, event):
+        return Hsm.RET_HANDLED
+
+    def tran(self, nextState):
+        self.state = getattr(self, nextState) if isinstance(nextState, str) else nextState
+        return Hsm.RET_TRAN
+
+    def super(self, superState):
+        if superState is None:
+            self.state = self.top
+        else:
+            self.state = getattr(self, superState) if isinstance(superState, str) else superState
+        return Hsm.RET_SUPER  # p. 158
 
     @state
-    def top(me, event):
+    def top(self, event):
         """This is the default state handler.
         This handler ignores all signals except
         the POSIX-like events, SIGINT/SIGTERM.
@@ -207,58 +241,92 @@ class Hsm(object):
             return Hsm.RET_HANDLED
         if Event.SIGTERM == event:
             return Hsm.RET_HANDLED
-
         # All other events are quietly ignored
-        return Hsm.RET_IGNORED # p. 165
+        return Hsm.RET_IGNORED  # p. 165
 
+    def _perform_init_chain(self, current):
+        """Act on the chain of initializations required starting from current."""
+        t = current
+        while self.trig(t if t != self.top else self._initial, Signal.INIT) == Hsm.RET_TRAN:
+            # The state handles the INIT message and needs to make a transition. The
+            #  "top" state is special in that it does not handle INIT messages, so we
+            #  defer to self._initial in this case
+            path = []  # Trace the path back to t via superstates
+            while self.state != t:
+                path.append(self.state)
+                self.trig(self.state, Signal.EMPTY)
+            # Restore the state to the target state
+            self.state = path[0]
+            assert len(path) < 32  # MAX_NEST_DEPTH
+            # Perform ENTRY action for each state from current to the target
+            path.reverse()  # in-place
+            for s in path:
+                self.enter(s)
+            # The target state has now to be checked to see if it responds to the INIT message
+            t = path[-1]  # -1 because path was reversed
+        return t
 
-    @staticmethod
-    def init(me, event = None):
+    def _perform_transition(self, source, target):
+        # Handle the state transition from source to target in the HSM.
+        s, t = source, target
+        path = [t]
+        if s == t:  # Case (a), transition to self
+            self.exit(s)
+            self.enter(t)
+        else:
+            # Find parent of target
+            self.trig(t, Signal.EMPTY)
+            t = self.state  # t is now parent of target
+            if s == t:  # Case (b), source is parent of target
+                self.enter(path[0])
+            else:
+                # Find parent of source
+                self.trig(s, Signal.EMPTY)
+                if self.state == t:  # Case (c), source and target share a parent
+                    self.exit(s)
+                    self.enter(path[0])
+                else:
+                    if self.state == path[0]:  # Case (d), target is parent of source
+                        self.exit(s)
+                    else:  # Check if the source is an ancestor of the target (case (e))
+                        lca_found = False
+                        path.append(t)  # Populates path[1]
+                        t = self.state  # t is now parent of source
+                        # Find and save ancestors of target into path
+                        #  until we find the source or hit the top
+                        self.state = path[1]
+                        while self.state != self.top:
+                            self.trig(self.state, Signal.EMPTY)
+                            path.append(self.state)
+                            assert len(path) < 32  # MAX_NEST_DEPTH
+                            if self.state == s:
+                                lca_found = True
+                                break
+                        if lca_found:  # This is case (e), enter states to get to target
+                            for st in reversed(path[:-1]):
+                                self.enter(st)
+                        else:
+                            self.exit(s)  # Exit the source for cases (f), (g), (h)
+                            self.state = t  # Start at parent of the source
+                            while self.state not in path:
+                                # Keep exiting until we reach the LCA. Note that exit
+                                #  modifies self.state (so we do not use Signal.EMPTY)
+                                self.exit(self.state)
+                            t = self.state
+                            # Step into children until we enter the target
+                            for st in reversed(path[:path.index(t)]):
+                                self.enter(st)
+
+    def init(self):
         """Transitions to the initial state.  Follows any INIT transitions
         from the inital state and performs ENTRY actions as it proceeds.
         Use this to pass any parameters to initialize the state machine.
         p. 172
         """
-
         # The initial state MUST transition to another state
-        assert me.initial_state(me, event) == Hsm.RET_TRAN
+        self.state = self._perform_init_chain(self.top)
 
-        # HSM starts in the top state
-        t = Hsm.top
-
-        # Drill into the target
-        while True:
-
-            # Store the target of the initial transition
-            path = [me.state]
-
-            # From the designated initial state, record the path to top
-            Hsm.trig(me, me.state, Signal.EMPTY)
-            while me.state != t:
-                path.append(me.state)
-                Hsm.trig(me, me.state, Signal.EMPTY)
-
-            # Restore the target of the initial transition
-            me.state = path[0]
-            assert len(path) < 32 # MAX_NEST_DEPTH (32 is arbitrary)
-
-            # Perform ENTRY action for each state from after-top to initial
-            path.reverse()
-            for s in path:
-                Hsm.enter(me, s)
-
-            # Current state becomes new source (-1 because path was reversed)
-            t = path[-1]
-
-            if Hsm.trig(me, t, Signal.INIT) != Hsm.RET_TRAN:
-                break
-
-        # Current state is set to the final leaf state
-        me.state = t
-
-
-    @staticmethod
-    def dispatch(me, event):
+    def dispatch(self, event):
         """Dispatches the given event to this Hsm.
         Follows the application's state transitions
         until the event is handled or top() is reached
@@ -267,63 +335,38 @@ class Hsm(object):
         Spy.on_hsm_dispatch_event(event)
 
         # Save the current state
-        t = me.state
+        t = self.state
 
-        # Proceed to superstates if event is not handled
+        # Proceed to superstates if event is not handled, we wish to find the superstate
+        #  (if any) that does handle the event and to record the path to that state
         exit_path = []
         r = Hsm.RET_SUPER
         while r == Hsm.RET_SUPER:
-            s = me.state
+            s = self.state
             exit_path.append(s)
             Spy.on_hsm_dispatch_pre(s)
-            r = s(me, event)    # invoke state handler
-
+            r = s(event)  # invoke state handler
+        # We leave the while loop with s at the state which was able to respond
+        #  to the event, or to self.top if none did
         Spy.on_hsm_dispatch_post(exit_path)
 
-        # If the state handler indicates a transition
+        # If the state handler for s requests a transition
         if r == Hsm.RET_TRAN:
-
+            t = self.state
             # Store target of transition
-            t = me.state
-
-            # Record path to top
-            Hsm.trig(me, me.state, Signal.EMPTY)
-            while me.state != Hsm.top:
-                exit_path.append(me.state)
-                Hsm.trig(me, me.state, Signal.EMPTY)
-
-            # Record path from target to top
-            me.state = t
-            entry_path = []
-            r = Hsm.RET_TRAN
-            while me.state != Hsm.top:
-                entry_path.append(me.state)
-                Hsm.trig(me, me.state, Signal.EMPTY)
-
-            # Find the Least Common Ancestor between the source and target
-            i = -1
-            while exit_path[i] == entry_path[i]:
-                i -= 1
-            n = len(exit_path) + i + 1
-
-            # Exit all states in the exit path
-            for st in exit_path[0:n]:
-                r = Hsm.exit(me, st)
+            # Exit from the current state to the state s which handles
+            # the transition. We do not exit from s=exit_path[-1] itself.
+            for st in exit_path[:-1]:
+                r = self.exit(st)
                 assert (r == Hsm.RET_SUPER) or (r == Hsm.RET_HANDLED)
+            s = exit_path[-1]
+            # Transition to t through the HSM
+            self._perform_transition(s, t)
+            # Do initializations starting at t
+            t = self._perform_init_chain(t)
 
-            # Enter all states in the entry path
-            # This is done in the reverse order of the path
-            for st in entry_path[n::-1]:
-                r = Hsm.enter(me, st)
-                assert r == Hsm.RET_HANDLED, (
-                        "Expected ENTRY to return "
-                        "HANDLED transitioning to {0}".format(t))
-
-            # Arrive at the target state
-            me.state = t
-
-        # Restore the current state
-        me.state = t
+        # Restore the state
+        self.state = t
 
 
 class Framework(object):
@@ -366,7 +409,6 @@ class Framework(object):
     # signal.  An Ahsm may subscribe to a signal at any time during runtime.
     _subscriber_table = {}
 
-
     @staticmethod
     def post(event, act):
         """Posts the event to the given Ahsm's event queue.
@@ -374,7 +416,6 @@ class Framework(object):
         """
         assert isinstance(act, Ahsm)
         act.postFIFO(event)
-
 
     @staticmethod
     def post_by_name(event, act_name):
@@ -388,7 +429,6 @@ class Framework(object):
             if act.__class__.__name__ == act_name:
                 act.postFIFO(event)
 
-
     @staticmethod
     def publish(event):
         """Posts the event to the message queue of every Ahsm
@@ -399,7 +439,6 @@ class Framework(object):
                 act.postFIFO(event)
         # Run to completion
         Framework._event_loop.call_soon_threadsafe(Framework.run)
-
 
     @staticmethod
     def subscribe(signame, act):
@@ -413,7 +452,6 @@ class Framework(object):
             Framework._subscriber_table[sigid] = []
         Framework._subscriber_table[sigid].append(act)
 
-
     @staticmethod
     def addTimeEvent(tm_event, delta):
         """Adds the TimeEvent to the list of time events in the Framework.
@@ -423,7 +461,6 @@ class Framework(object):
         expiration = Framework._event_loop.time() + delta
         Framework.addTimeEventAt(tm_event, expiration)
 
-
     @staticmethod
     def addTimeEventAt(tm_event, abs_time):
         """Adds the TimeEvent to the list of time events in the Framework.
@@ -432,7 +469,6 @@ class Framework(object):
         """
         assert tm_event not in Framework._time_events.values()
         Framework._insortTimeEvent(tm_event, abs_time)
-
 
     @staticmethod
     def _insortTimeEvent(tm_event, expiration):
@@ -458,18 +494,16 @@ class Framework(object):
 
         # If this is the only active TimeEvent, schedule its callback
         if len(Framework._time_events) == 1:
-            Framework._tm_event_handle = Framework._event_loop.call_at(
-                expiration, Framework.timeEventCallback, tm_event, expiration)
+            Framework._tm_event_handle = Framework._event_loop.call_at(expiration, Framework.timeEventCallback, tm_event,
+                                                                       expiration)
 
         # If there are other TimeEvents,
         # check if this one should replace the scheduled one
         else:
             if expiration < min(Framework._time_events.keys()):
                 Framework._tm_event_handle.cancel()
-                Framework._tm_event_handle = Framework._event_loop.call_at(
-                    expiration, Framework.timeEventCallback, tm_event,
-                    expiration)
-
+                Framework._tm_event_handle = Framework._event_loop.call_at(expiration, Framework.timeEventCallback, tm_event,
+                                                                           expiration)
 
     @staticmethod
     def removeTimeEvent(tm_event):
@@ -477,7 +511,7 @@ class Framework(object):
         Cancels the TimeEvent's callback if there is one.
         Schedules the next event's callback if there is one.
         """
-        for k,v in Framework._time_events.items():
+        for k, v in Framework._time_events.items():
             if v is tm_event:
 
                 # If the event being removed is scheduled for callback,
@@ -499,7 +533,6 @@ class Framework(object):
                     del Framework._time_events[k]
                 break
 
-
     @staticmethod
     def timeEventCallback(tm_event, expiration):
         """The callback function for all TimeEvents.
@@ -507,9 +540,8 @@ class Framework(object):
         If the TimeEvent is periodic, re-insort the event
         in the list of active time events.
         """
-        assert expiration in Framework._time_events.keys(), (
-            "Exp:%d _time_events.keys():%s" %
-            (expiration, Framework._time_events.keys()))
+        assert expiration in Framework._time_events.keys(), ("Exp:%d _time_events.keys():%s" %
+                                                             (expiration, Framework._time_events.keys()))
 
         # Remove this expired TimeEvent from the active list
         del Framework._time_events[expiration]
@@ -520,39 +552,35 @@ class Framework(object):
 
         # If this is a periodic time event, schedule its next expiration
         if tm_event.interval > 0:
-            Framework._insortTimeEvent(tm_event,
-                expiration + tm_event.interval)
+            Framework._insortTimeEvent(tm_event, expiration + tm_event.interval)
 
         # If not set already and there are more events, set the next event callback
-        if (Framework._tm_event_handle == None and
-                len(Framework._time_events) > 0):
+        if (Framework._tm_event_handle is None and len(Framework._time_events) > 0):
             next_expiration = min(Framework._time_events.keys())
             next_event = Framework._time_events[next_expiration]
-            Framework._tm_event_handle = Framework._event_loop.call_at(
-                next_expiration, Framework.timeEventCallback, next_event,
-                next_expiration)
+            Framework._tm_event_handle = Framework._event_loop.call_at(next_expiration, Framework.timeEventCallback, next_event,
+                                                                       next_expiration)
 
         # Run to completion
         Framework._event_loop.call_soon_threadsafe(Framework.run)
-
 
     @staticmethod
     def add(act):
         """Makes the framework aware of the given Ahsm.
         """
         Framework._ahsm_registry.append(act)
-        assert act.priority not in Framework._priority_dict, (
-                "Priority MUST be unique")
+        assert act.priority not in Framework._priority_dict, ("Priority MUST be unique")
         Framework._priority_dict[act.priority] = act
         Spy.on_framework_add(act)
-
 
     @staticmethod
     def run():
         """Dispatches an event to the highest priority Ahsm
         until all event queues are empty (i.e. Run To Completion).
         """
-        getPriority = lambda x : x.priority
+
+        def getPriority(x):
+            return x.priority
 
         while True:
             allQueuesEmpty = True
@@ -560,12 +588,11 @@ class Framework(object):
             for act in sorted_acts:
                 if act.has_msgs():
                     event_next = act.pop_msg()
-                    act.dispatch(act, event_next)
+                    act.dispatch(event_next)
                     allQueuesEmpty = False
                     break
             if allQueuesEmpty:
                 return
-
 
     @staticmethod
     def stop():
@@ -586,7 +613,6 @@ class Framework(object):
 
         Spy.on_framework_stop()
 
-
     @staticmethod
     def print_info():
         """Prints the name and current state
@@ -595,7 +621,6 @@ class Framework(object):
         """
         for act in Framework._ahsm_registry:
             print(act.__class__.__name__, act.state.__name__)
-
 
     # Bind a useful set of POSIX signals to the handler
     # (ignore a NotImplementedError on Windows)
@@ -624,12 +649,12 @@ class Ahsm(Hsm):
     Adds a priority, message queue and methods to work with the queue.
     """
 
-    def start(self, priority, initEvent=None):
+    def start(self, priority):
         # must set the priority before Framework.add() which uses the priority
         self.priority = priority
         Framework.add(self)
         self.mq = collections.deque()
-        self.init(self, initEvent)
+        self.init()
         # Run to completion
         Framework._event_loop.call_soon_threadsafe(Framework.run)
 
@@ -639,11 +664,66 @@ class Ahsm(Hsm):
     def postFIFO(self, evt):
         self.mq.appendleft(evt)
 
-    def pop_msg(self,):
+    def pop_msg(self, ):
         return self.mq.pop()
 
-    def has_msgs(self,):
+    def has_msgs(self, ):
         return len(self.mq) > 0
+
+
+class Factory(Ahsm):
+    _handled_signals = {}
+    _parents = {}
+
+    def __init__(self):
+        super().__init__()
+
+    @classmethod
+    def _add_catch(cls, state_name, signal_name, handler_name):
+        cls._handled_signals[state_name][signal_name] = handler_name
+
+    @classmethod
+    def _build_initial(cls, initial_state, setup, signal_list):
+        def _initial(self, event):
+            if setup:
+                getattr(self, setup)()
+            for sig in signal_list:
+                Framework.subscribe(sig, self)
+            return self.tran(initial_state)
+        handler = state(copy(_initial))
+        handler.__name__ = "_initial"
+        handler.__qualname__ = handler.__name__
+        handler.__module__ = cls.__module__
+        setattr(cls, "_initial", handler)
+
+    @classmethod
+    def _build_state(cls, name, parent):
+        def state_handler(self, event):
+            sig_name = Signal._lookup[event.signal]
+            if sig_name in cls._handled_signals[name]:
+                event_handler = getattr(self, cls._handled_signals[name][sig_name])
+                ret_val = event_handler(event)
+                if ret_val is not None:
+                    return ret_val
+            return self.super(parent)
+        handler = state(copy(state_handler))
+        handler.__name__ = name
+        handler.__qualname__ = handler.__name__
+        handler.__module__ = cls.__module__
+        setattr(cls, name, handler)
+        cls._handled_signals[name] = {}
+        cls._parents[name] = parent
+
+    @classmethod
+    def build_hsm(cls, descr):
+        cls._handled_signals = {}
+        cls._parents = {}
+        # Build the _initial method
+        cls._build_initial(descr.initial, descr.setup, descr.signals)
+        for state in descr.states:
+            cls._build_state(state.name, state.parent)
+            for catch in state.catches:
+                cls._add_catch(state.name, catch.signal, catch.handler)
 
 
 class TimeEvent(object):
@@ -653,11 +733,11 @@ class TimeEvent(object):
     A one-shot TimeEvent is created by calling either postAt() or postIn().
     A periodic TimeEvent is created by calling the postEvery() method.
     """
+
     def __init__(self, signame):
         assert type(signame) == str
         self.signal = Signal.register(signame)
         self.value = None
-
 
     def postAt(self, act, abs_time):
         """Posts this TimeEvent to the given Ahsm at a specified time.
@@ -667,7 +747,6 @@ class TimeEvent(object):
         self.interval = 0
         Framework.addTimeEventAt(self, abs_time)
 
-
     def postIn(self, act, delta):
         """Posts this TimeEvent to the given Ahsm after the time delta.
         """
@@ -675,7 +754,6 @@ class TimeEvent(object):
         self.act = act
         self.interval = 0
         Framework.addTimeEvent(self, delta)
-
 
     def postEvery(self, act, delta):
         """Posts this TimeEvent to the given Ahsm after the time delta
@@ -685,7 +763,6 @@ class TimeEvent(object):
         self.act = act
         self.interval = delta
         Framework.addTimeEvent(self, delta)
-
 
     def disarm(self):
         """Removes this TimeEvent from the Framework's active time events.
