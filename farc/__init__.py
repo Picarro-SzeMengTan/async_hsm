@@ -309,9 +309,11 @@ class Hsm(object):
                             self.exit(s)  # Exit the source for cases (f), (g), (h)
                             self.state = t  # Start at parent of the source
                             while self.state not in path:
-                                # Keep exiting until we reach the LCA. Note that exit
-                                #  modifies self.state (so we do not use Signal.EMPTY)
-                                self.exit(self.state)
+                                # Keep exiting up into superstates until we reach the LCA.
+                                #  Depending on whether the EXIT signal is handled, we may also need
+                                #  to send the EMPTY signal to make self.state climb to the superstate.
+                                if self.exit(self.state) == Hsm.RET_HANDLED:
+                                    self.trig(self.state, Signal.EMPTY)
                             t = self.state
                             # Step into children until we enter the target
                             for st in reversed(path[:path.index(t)]):

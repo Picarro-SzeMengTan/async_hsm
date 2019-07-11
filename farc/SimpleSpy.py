@@ -26,7 +26,7 @@ class SimpleSpy(metaclass=SpyType):
 
     @staticmethod
     def logger(msg):
-        print(msg, end='')
+        print(msg, end='', flush=True)
         __class__._log_lines.append(msg)
 
     @staticmethod
