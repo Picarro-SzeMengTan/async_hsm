@@ -47,7 +47,7 @@ class SimpleSpy(metaclass=SpyType):
     @staticmethod
     def on_framework_add(act):
         for name, state in inspect.getmembers(act.__class__, predicate=inspect.isfunction):
-            if hasattr(state, "farc_state"):
+            if hasattr(state, "async_hsm_state"):
                 __class__._state_names[state] = name
 
     @staticmethod

@@ -3,32 +3,32 @@
 
 import asyncio
 
-import farc
+import async_hsm
 
 
-class Iterate(farc.Ahsm):
+class Iterate(async_hsm.Ahsm):
     def __init__(self,):
         super().__init__()
-        farc.Signal.register("ITERATE")
+        async_hsm.Signal.register("ITERATE")
 
 
-    @farc.state
+    @async_hsm.state
     def _initial(self, event):
         print("_initial")
-        self.iter_evt = farc.Event(farc.Signal.ITERATE, None)
+        self.iter_evt = async_hsm.Event(async_hsm.Signal.ITERATE, None)
         return self.tran(self._iterating)
 
 
-    @farc.state
+    @async_hsm.state
     def _iterating(self, event):
         sig = event.signal
-        if sig == farc.Signal.ENTRY:
+        if sig == async_hsm.Signal.ENTRY:
             print("_iterating")
             self.count = 10
             self.postFIFO(self.iter_evt)
             return self.handled(event)
 
-        elif sig == farc.Signal.ITERATE:
+        elif sig == async_hsm.Signal.ITERATE:
             print(self.count)
 
             if self.count == 0:
@@ -41,12 +41,12 @@ class Iterate(farc.Ahsm):
         return self.super(self.top)
 
 
-    @farc.state
+    @async_hsm.state
     def _exiting(self, event):
         sig = event.signal
-        if sig == farc.Signal.ENTRY:
+        if sig == async_hsm.Signal.ENTRY:
             print("_exiting")
-            farc.Framework.stop()
+            async_hsm.Framework.stop()
             return self.handled(event)
         return self.super(self.top)
 
@@ -55,4 +55,4 @@ if __name__ == "__main__":
     sl = Iterate()
     sl.start(0)
 
-    farc.run_forever()
+    async_hsm.run_forever()

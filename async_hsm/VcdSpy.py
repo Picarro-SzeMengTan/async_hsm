@@ -65,7 +65,7 @@ class VcdSpy(metaclass=SpyType):
         # for each state in the Actor's state machine
         for nm, st in inspect.getmembers(
                 act.__class__, predicate=inspect.isfunction):
-            if hasattr(st, "farc_state"):
+            if hasattr(st, "async_hsm_state"):
                 st_lbl = "St%d_%s_%s" % (
                     act.priority, act.__class__.__name__, nm)
                 act_var = VcdSpy._vcd_writer.register_var(
@@ -114,7 +114,7 @@ class VcdSpy(metaclass=SpyType):
 
     @staticmethod
     def on_signal_register(signame, sigid):
-        """Registers a signal with the VcdWriter when that signal is registered with farc
+        """Registers a signal with the VcdWriter when that signal is registered with async_hsm
         """
         sig_lbl = "Sig%d_%s" % (sigid, signame)
         VcdSpy._vcd_var_sig[sigid] = VcdSpy._vcd_writer.register_var(

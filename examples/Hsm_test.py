@@ -1,163 +1,163 @@
 #!/usr/bin/env python3
 
 
-import farc
-from farc.SimpleSpy import SimpleSpy as Spy
+import async_hsm
+from async_hsm.SimpleSpy import SimpleSpy as Spy
 
 
-class HsmTest(farc.Ahsm):
+class HsmTest(async_hsm.Ahsm):
     def __init__(self):
         super().__init__()
         # Define signals that this chart subscribes to
         self.foo = None
         self.running = None
 
-    @farc.state
+    @async_hsm.state
     def _initial(self, event):
-        farc.Signal.register("a")
-        farc.Signal.register("b")
-        farc.Signal.register("c")
-        farc.Signal.register("d")
-        farc.Signal.register("e")
-        farc.Signal.register("f")
-        farc.Signal.register("g")
-        farc.Signal.register("h")
-        farc.Signal.register("i")
-        farc.Signal.register("t")
+        async_hsm.Signal.register("a")
+        async_hsm.Signal.register("b")
+        async_hsm.Signal.register("c")
+        async_hsm.Signal.register("d")
+        async_hsm.Signal.register("e")
+        async_hsm.Signal.register("f")
+        async_hsm.Signal.register("g")
+        async_hsm.Signal.register("h")
+        async_hsm.Signal.register("i")
+        async_hsm.Signal.register("t")
         self.running = True
         self.foo = 0
         # print(f"foo={self.foo}")
         return self.tran(self._s2)
 
-    @farc.state
+    @async_hsm.state
     def _s(self, event):
         sig = event.signal
-        if sig == farc.Signal.INIT:
+        if sig == async_hsm.Signal.INIT:
             return self.tran(self._s11)
-        elif sig == farc.Signal.ENTRY:
+        elif sig == async_hsm.Signal.ENTRY:
             return self.handled(event)
-        elif sig == farc.Signal.EXIT:
+        elif sig == async_hsm.Signal.EXIT:
             return self.handled(event)
-        elif sig == farc.Signal.i:
+        elif sig == async_hsm.Signal.i:
             if self.foo:
                 self.foo = 0
                 # print(f"foo={self.foo}")
                 return self.handled(event)
-        elif sig == farc.Signal.e:
+        elif sig == async_hsm.Signal.e:
             return self.tran(self._s11)
-        elif sig == farc.Signal.t:
+        elif sig == async_hsm.Signal.t:
             return self.tran(self._exiting)
         return self.super(self.top)
 
-    @farc.state
+    @async_hsm.state
     def _s1(self, event):
         sig = event.signal
-        if sig == farc.Signal.INIT:
+        if sig == async_hsm.Signal.INIT:
             return self.tran(self._s11)
-        elif sig == farc.Signal.ENTRY:
+        elif sig == async_hsm.Signal.ENTRY:
             return self.handled(event)
-        elif sig == farc.Signal.EXIT:
+        elif sig == async_hsm.Signal.EXIT:
             return self.handled(event)
-        elif sig == farc.Signal.a:
+        elif sig == async_hsm.Signal.a:
             return self.tran(self._s1)
-        elif sig == farc.Signal.b:
+        elif sig == async_hsm.Signal.b:
             return self.tran(self._s11)
-        elif sig == farc.Signal.c:
+        elif sig == async_hsm.Signal.c:
             return self.tran(self._s2)
-        elif sig == farc.Signal.d:
+        elif sig == async_hsm.Signal.d:
             if not self.foo:
                 self.foo = 1
                 # print(f"foo={self.foo}")
                 return self.tran(self._s)
-        elif sig == farc.Signal.f:
+        elif sig == async_hsm.Signal.f:
             return self.tran(self._s211)
-        elif sig == farc.Signal.i:
+        elif sig == async_hsm.Signal.i:
             return self.handled(event)
         return self.super(self._s)
 
-    @farc.state
+    @async_hsm.state
     def _s11(self, event):
         sig = event.signal
-        if sig == farc.Signal.ENTRY:
+        if sig == async_hsm.Signal.ENTRY:
             return self.handled(event)
-        elif sig == farc.Signal.EXIT:
+        elif sig == async_hsm.Signal.EXIT:
             return self.handled(event)
-        elif sig == farc.Signal.d:
+        elif sig == async_hsm.Signal.d:
             if self.foo:
                 self.foo = 0
                 # print(f"foo={self.foo}")
                 return self.tran(self._s1)
-        elif sig == farc.Signal.g:
+        elif sig == async_hsm.Signal.g:
             return self.tran(self._s211)
-        elif sig == farc.Signal.h:
+        elif sig == async_hsm.Signal.h:
             return self.tran(self._s)
         return self.super(self._s1)
 
-    @farc.state
+    @async_hsm.state
     def _s2(self, event):
         sig = event.signal
-        if sig == farc.Signal.INIT:
+        if sig == async_hsm.Signal.INIT:
             return self.tran(self._s211)
-        elif sig == farc.Signal.ENTRY:
+        elif sig == async_hsm.Signal.ENTRY:
             return self.handled(event)
-        elif sig == farc.Signal.EXIT:
+        elif sig == async_hsm.Signal.EXIT:
             return self.handled(event)
-        elif sig == farc.Signal.c:
+        elif sig == async_hsm.Signal.c:
             return self.tran(self._s1)
-        elif sig == farc.Signal.f:
+        elif sig == async_hsm.Signal.f:
             return self.tran(self._s11)
-        elif sig == farc.Signal.i:
+        elif sig == async_hsm.Signal.i:
             if not self.foo:
                 self.foo = 1
                 # print(f"foo={self.foo}")
                 return self.handled(event)
         return self.super(self._s)
 
-    @farc.state
+    @async_hsm.state
     def _s21(self, event):
         sig = event.signal
-        if sig == farc.Signal.INIT:
+        if sig == async_hsm.Signal.INIT:
             return self.tran(self._s211)
-        elif sig == farc.Signal.ENTRY:
+        elif sig == async_hsm.Signal.ENTRY:
             return self.handled(event)
-        elif sig == farc.Signal.EXIT:
+        elif sig == async_hsm.Signal.EXIT:
             return self.handled(event)
-        elif sig == farc.Signal.a:
+        elif sig == async_hsm.Signal.a:
             return self.tran(self._s21)
-        elif sig == farc.Signal.b:
+        elif sig == async_hsm.Signal.b:
             return self.tran(self._s211)
-        elif sig == farc.Signal.g:
+        elif sig == async_hsm.Signal.g:
             return self.tran(self._s1)
         return self.super(self._s2)
 
-    @farc.state
+    @async_hsm.state
     def _s211(self, event):
         sig = event.signal
-        if sig == farc.Signal.ENTRY:
+        if sig == async_hsm.Signal.ENTRY:
             return self.handled(event)
-        elif sig == farc.Signal.EXIT:
+        elif sig == async_hsm.Signal.EXIT:
             return self.handled(event)
-        elif sig == farc.Signal.d:
+        elif sig == async_hsm.Signal.d:
             return self.tran(self._s21)
-        elif sig == farc.Signal.h:
+        elif sig == async_hsm.Signal.h:
             return self.tran(self._s)
         return self.super(self._s21)
 
-    @farc.state
+    @async_hsm.state
     def _exiting(self, event):
         sig = event.signal
-        if sig == farc.Signal.ENTRY:
+        if sig == async_hsm.Signal.ENTRY:
             self.running = False
-            farc.Framework.stop()
+            async_hsm.Framework.stop()
             return self.handled(event)
-        elif sig == farc.Signal.EXIT:
+        elif sig == async_hsm.Signal.EXIT:
             return self.handled(event)
 
         return self.super(self.top)
 
 
 if __name__ == "__main__":
-    farc.Spy.enable_spy(Spy)
+    async_hsm.Spy.enable_spy(Spy)
     s1 = HsmTest()
     Spy.on_framework_add(s1)
     interactive = True
@@ -166,11 +166,11 @@ if __name__ == "__main__":
         while s1.running:
             sig_name = input('\tEvent --> ')
             try:
-                sig = getattr(farc.Signal, sig_name)
+                sig = getattr(async_hsm.Signal, sig_name)
             except LookupError:
                 print("\nInvalid signal name", end="")
                 continue
-            event = farc.Event(sig, None)
+            event = async_hsm.Event(sig, None)
             s1.dispatch(event)
 
         print("\nTerminated")
@@ -179,6 +179,6 @@ if __name__ == "__main__":
         seq = ['g', 'i', 'a', 'd', 'd', 'c', 'e', 'e', 'g', 'i', 'i', 't']
         s1.start(0)
         for sig in seq:
-            event = farc.Event(getattr(farc.Signal, sig), None)
+            event = async_hsm.Event(getattr(async_hsm.Signal, sig), None)
             s1.postFIFO(event)
-        farc.run_forever()
+        async_hsm.run_forever()

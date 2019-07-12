@@ -32,8 +32,8 @@ class HsmDescription:
 
 
 class Spy(object):
-    """Spy is the debugging system for farc.
-    farc contains a handful of Spy.on_*() methods
+    """Spy is the debugging system for async_hsm.
+    async_hsm contains a handful of Spy.on_*() methods
     placed at useful locations in the framework.
     It is up to a Spy driver (such as the included VcdSpy)
     to implement the Spy.on_*() methods.
@@ -149,9 +149,9 @@ Event.reserved = (Event.EMPTY, Event.ENTRY, Event.EXIT, Event.INIT)
 
 def state(func):
     """A decorator that identifies which methods are states.
-    The presence of the farc_state attr, not the value of the attr,
+    The presence of the async_hsm_state attr, not the value of the attr,
     determines statehood.
-    The Spy debugging system uses the farc_state attribute
+    The Spy debugging system uses the async_hsm_state attribute
     to determine which methods inside a class are actually states.
     Other uses of the attribute may come in the future.
     """
@@ -162,7 +162,7 @@ def state(func):
         Spy.on_state_handler_called(func_wrap, evt, result)
         return result
 
-    setattr(func_wrap, "farc_state", True)
+    setattr(func_wrap, "async_hsm_state", True)
     return func_wrap
 
 
@@ -190,7 +190,7 @@ class Hsm(object):
         # We initialize this to self.top, the default message handler
         self.state = self.top
 
-        # Farc differs from QP here in that we hardcode
+        # Async_hsm differs from QP here in that we hardcode
         # the initial state to be "_initial"
 
     def _initial(self, event):

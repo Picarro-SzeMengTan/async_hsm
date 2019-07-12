@@ -2,30 +2,30 @@
 
 
 import asyncio
-import farc
+import async_hsm
 
-class Countdown(farc.Ahsm):
+class Countdown(async_hsm.Ahsm):
     def __init__(self, count=3):
         super().__init__()
         self.count = count
 
 
-    @farc.state
+    @async_hsm.state
     def _initial(self, event):
         print("_initial")
-        self.te = farc.TimeEvent("TIME_TICK")
+        self.te = async_hsm.TimeEvent("TIME_TICK")
         return self.tran(self._counting)
 
 
-    @farc.state
+    @async_hsm.state
     def _counting(self, event):
         sig = event.signal
-        if sig == farc.Signal.ENTRY:
+        if sig == async_hsm.Signal.ENTRY:
             print("_counting")
             self.te.postIn(self, 1.0)
             return self.handled(event)
 
-        elif sig == farc.Signal.TIME_TICK:
+        elif sig == async_hsm.Signal.TIME_TICK:
             print(self.count)
 
             if self.count == 0:
@@ -38,12 +38,12 @@ class Countdown(farc.Ahsm):
         return self.super(self.top)
 
 
-    @farc.state
+    @async_hsm.state
     def _exiting(self, event):
         sig = event.signal
-        if sig == farc.Signal.ENTRY:
+        if sig == async_hsm.Signal.ENTRY:
             print("_exiting")
-            farc.Framework.stop()
+            async_hsm.Framework.stop()
             return self.handled(event)
 
         return self.super(self.top)
@@ -51,8 +51,8 @@ class Countdown(farc.Ahsm):
 
 if __name__ == "__main__":
     # from SelectiveSpy import SelectiveSpy as Spy
-    # farc.Spy.enable_spy(Spy)
+    # async_hsm.Spy.enable_spy(Spy)
     sl = Countdown(10)
     sl.start(0)
 
-    farc.run_forever()
+    async_hsm.run_forever()

@@ -3,51 +3,51 @@
 
 import asyncio
 
-import farc
+import async_hsm
 
 
-class Stoplight(farc.Ahsm):
+class Stoplight(async_hsm.Ahsm):
 
-    @farc.state
+    @async_hsm.state
     def _initial(self, event):
         print("Stoplight _initial")
 
-        te = farc.TimeEvent("TIME_TICK")
+        te = async_hsm.TimeEvent("TIME_TICK")
         te.postEvery(self, 2.0)
 
         return self.tran(self._red)
 
 
-    @farc.state
+    @async_hsm.state
     def _red(self, event):
         sig = event.signal
-        if sig == farc.Signal.ENTRY:
+        if sig == async_hsm.Signal.ENTRY:
             print("_red enter")
             return self.handled(event)
 
-        elif sig == farc.Signal.TIME_TICK:
+        elif sig == async_hsm.Signal.TIME_TICK:
             print("_red next")
             return self.tran(self._green)
 
-        elif sig == farc.Signal.EXIT:
+        elif sig == async_hsm.Signal.EXIT:
             print("_red exit")
             return self.handled(event)
 
         return self.super(self.top)
 
 
-    @farc.state
+    @async_hsm.state
     def _green(self, event):
         sig = event.signal
-        if sig == farc.Signal.ENTRY:
+        if sig == async_hsm.Signal.ENTRY:
             print("_green enter")
             return self.handled(event)
 
-        elif sig == farc.Signal.TIME_TICK:
+        elif sig == async_hsm.Signal.TIME_TICK:
             print("_green next")
             return self.tran(self._red)
 
-        elif sig == farc.Signal.EXIT:
+        elif sig == async_hsm.Signal.EXIT:
             print("_green exit")
             return self.handled(event)
 
@@ -55,9 +55,9 @@ class Stoplight(farc.Ahsm):
 
 
 if __name__ == "__main__":
-    # from farc.SimpleSpy import SimpleSpy
-    # farc.Spy.enable_spy(SimpleSpy)
+    # from async_hsm.SimpleSpy import SimpleSpy
+    # async_hsm.Spy.enable_spy(SimpleSpy)
     sl = Stoplight()
     sl.start(0)
 
-    farc.run_forever()
+    async_hsm.run_forever()
