@@ -36,7 +36,9 @@ The workaround is to inject an event to awake the event loop.
   rather than static ones which require the state machine to be passed as 
   the first argument.
 
-- It is now possible to define state machines using a table-driven format
+- It is now possible to define state machines using a table-driven format.
+  The examples Hsm_test.py and Hsm_test_tabled.py show how the same state
+  machine may be entered in the two formats.
 
 2019/05/15  0.1.1
 - Removed 'initialState' argument from async_hsm.Hsm() constructor;
