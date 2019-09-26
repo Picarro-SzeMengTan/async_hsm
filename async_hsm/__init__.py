@@ -1,8 +1,6 @@
 import asyncio
 import collections
-import math
 import signal
-import sys
 import traceback
 import typing
 from copy import copy
@@ -197,7 +195,13 @@ class Hsm(object):
         # The terminated flag indicates that this state machine is
         #  finished. Usually set in the _exit state.
         self.terminated = False
-
+        #
+        # The publish_errors flag affects how exceptions raised in this
+        #  HSM are treated. The resulting Event with type Signal.ERROR
+        #  may be published to the framework (if publish_errors is True)
+        #  or placed on the FIFO of just this Hsm (if publish_errors
+        #  is False)
+        self.publish_errors = True
         # Async_hsm differs from QP here in that we hardcode
         # the initial state to be "_initial"
 
@@ -248,13 +252,16 @@ class Hsm(object):
             try:
                 await cor
             except Exception as e:
-                self.postFIFO(
-                    Event(Signal.ERROR, {
-                        "exc": e,
-                        "traceback": traceback.format_exc(),
-                        "location": self.__class__.__name__,
-                        "name": cor.__name__
-                    }))
+                event = Event(Signal.ERROR, {
+                    "exc": e,
+                    "traceback": traceback.format_exc(),
+                    "location": self.__class__.__name__,
+                    "name": cor.__name__
+                })
+                if self.publish_errors:
+                    Framework.publish(event)
+                else:
+                    self.postFIFO(event)
 
         asyncio.create_task(wrapped_cor())
 
@@ -367,43 +374,51 @@ class Hsm(object):
         until the event is handled or top() is reached
         p. 174
         """
-        Spy.on_hsm_dispatch_event(event)
+        try:
+            Spy.on_hsm_dispatch_event(event)
 
-        # Save the current state
-        t = self.state
-        self.state_receiving_dispatch = t
-
-        # Proceed to superstates if event is not handled, we wish to find the superstate
-        #  (if any) that does handle the event and to record the path to that state
-        exit_path = []
-        r = Hsm.RET_SUPER
-        while r == Hsm.RET_SUPER:
-            s = self.state
-            exit_path.append(s)
-            Spy.on_hsm_dispatch_pre(s)
-            r = s(event)  # invoke state handler
-        # We leave the while loop with s at the state which was able to respond
-        #  to the event, or to self.top if none did
-        Spy.on_hsm_dispatch_post(exit_path)
-
-        # If the state handler for s requests a transition
-        if r == Hsm.RET_TRAN:
+            # Save the current state
             t = self.state
-            # Store target of transition
-            # Exit from the current state to the state s which handles
-            # the transition. We do not exit from s=exit_path[-1] itself.
-            for st in exit_path[:-1]:
-                r = self.exit(st)
-                assert (r == Hsm.RET_SUPER) or (r == Hsm.RET_HANDLED)
-            s = exit_path[-1]
-            # Transition to t through the HSM
-            self._perform_transition(s, t)
-            # Do initializations starting at t
-            t = self._perform_init_chain(t)
+            self.state_receiving_dispatch = t
 
-        # Restore the state
-        self.state = t
-        self.state_receiving_dispatch = None
+            # Proceed to superstates if event is not handled, we wish to find the superstate
+            #  (if any) that does handle the event and to record the path to that state
+            exit_path = []
+            r = Hsm.RET_SUPER
+            while r == Hsm.RET_SUPER:
+                s = self.state
+                exit_path.append(s)
+                Spy.on_hsm_dispatch_pre(s)
+                r = s(event)  # invoke state handler
+            # We leave the while loop with s at the state which was able to respond
+            #  to the event, or to self.top if none did
+            Spy.on_hsm_dispatch_post(exit_path)
+
+            # If the state handler for s requests a transition
+            if r == Hsm.RET_TRAN:
+                t = self.state
+                # Store target of transition
+                # Exit from the current state to the state s which handles
+                # the transition. We do not exit from s=exit_path[-1] itself.
+                for st in exit_path[:-1]:
+                    r = self.exit(st)
+                    assert (r == Hsm.RET_SUPER) or (r == Hsm.RET_HANDLED)
+                s = exit_path[-1]
+                # Transition to t through the HSM
+                self._perform_transition(s, t)
+                # Do initializations starting at t
+                t = self._perform_init_chain(t)
+
+            # Restore the state
+            self.state = t
+            self.state_receiving_dispatch = None
+
+        except Exception as e:
+            event = Event(Signal.ERROR, {"exc": e, "traceback": traceback.format_exc(), "location": self.__class__.__name__})
+            if self.publish_errors:
+                Framework.publish(event)
+            else:
+                self.postFIFO(event)
 
 
 class Framework(object):
@@ -417,7 +432,7 @@ class Framework(object):
 
     # The event loop is accessed through the get_event_loop method. The private
     #  attribute __event_loop is initialized the first time get_event_loop is called
-    #  and is subsequently returned by the get_event_loop method 
+    #  and is subsequently returned by the get_event_loop method
     __event_loop = None
 
     # The Framework maintains a registry of Ahsms in a list.
@@ -450,8 +465,8 @@ class Framework(object):
 
     # The terminate event is accessed through the get_terminate_event method. The private
     #  attribute __terminate_event is initialized the first time get_terminate_event is called
-    #  and is subsequently returned by the get_terminate_event method 
-    # The event is set once all the AHSMs in the framework have set their terminated attribute, 
+    #  and is subsequently returned by the get_terminate_event method
+    # The event is set once all the AHSMs in the framework have set their terminated attribute,
     #  which is usually done in their _exit states
     __terminate_event = None
 
@@ -596,8 +611,8 @@ class Framework(object):
         If any exception occurs in the state handler functions called
         while performing ``dispatch``, post the ERROR event on the FIFO
         of the state machine, with information about the exception, a traceback
-        and the class name in which the exception occured, so that it can be 
-        dealt with appropriately. 
+        and the class name in which the exception occured, so that it can be
+        dealt with appropriately.
         """
         def getPriority(x):
             return x.priority
@@ -612,15 +627,7 @@ class Framework(object):
                 terminate = False
                 if act.has_msgs():
                     event_next = act.pop_msg()
-                    try:
-                        act.dispatch(event_next)
-                    except Exception as e:
-                        act.postFIFO(
-                            Event(Signal.ERROR, {
-                                "exc": e,
-                                "traceback": traceback.format_exc(),
-                                "location": act.__class__.__name__
-                            }))
+                    act.dispatch(event_next)
                     allQueuesEmpty = False
                     break
             if terminate:
@@ -680,6 +687,7 @@ class Framework(object):
         """Await this coroutine to wait for all state machines to terminate"""
         await Framework.get_terminate_event().wait()
 
+
 class Ahsm(Hsm):
     """An Augmented Hierarchical State Machine (AHSM); a.k.a. ActiveObject/AO.
     Adds a priority, message queue and methods to work with the queue.
@@ -692,12 +700,11 @@ class Ahsm(Hsm):
         try:
             self.init()
         except Exception as e:
-            self.postFIFO(
-                Event(Signal.ERROR, {
-                    "exc": e,
-                    "traceback": traceback.format_exc(),
-                    "location": self.__class__.__name__
-                }))
+            event = Event(Signal.ERROR, {"exc": e, "traceback": traceback.format_exc(), "location": self.__class__.__name__})
+            if self.publish_errors:
+                Framework.publish(event)
+            else:
+                self.postFIFO(event)
         # Run to completion
         Framework.get_event_loop().call_soon_threadsafe(Framework.run)
 

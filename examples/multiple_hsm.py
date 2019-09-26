@@ -12,6 +12,7 @@ class MyHsm(Ahsm):
         self.name = name
         self.period = period
         self.count = 0
+        self.publish_errors = False
 
     async def async_task_example(self, name):
         await asyncio.sleep(1.0)
@@ -73,7 +74,7 @@ class MyHsm(Ahsm):
         return self.super(self._running)
 
 
-class MultipleHsm:
+class HsmPool:
     """
     Start a collection of HSMs running in a single asyncio event loop.
     We wish to investigate exception handling and error recovery so that
@@ -86,7 +87,7 @@ class MultipleHsm:
         self.tasks = []
 
     async def shutdown(self):
-        print(f"Calling shutdown in MultipleHsm")
+        print(f"Calling shutdown in HsmPool")
         for task in self.tasks:
             task.cancel()
 
@@ -105,7 +106,7 @@ async def main():
     # from async_hsm.SimpleSpy import SimpleSpy
     # async_hsm.Spy.enable_spy(SimpleSpy)
     try:
-        multi = MultipleHsm()
+        multi = HsmPool()
         await multi.startup()
         await Framework.done()
     except Exception:
