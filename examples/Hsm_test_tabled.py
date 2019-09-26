@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-
+import asyncio
+from types import MethodType
 
 import async_hsm
+from async_hsm import (Catch, Event, Factory, Framework, HsmDescription, Signal, State)
 from async_hsm.SimpleSpy import SimpleSpy as Spy
 
-from async_hsm import Catch, Event, Factory, Framework, HsmDescription, Signal, State
-from types import MethodType
 
 class HsmTest(Factory):
     def __init__(self):
@@ -19,6 +19,7 @@ class HsmTest(Factory):
 
             def func(e):
                 return self.tran(target)
+
             return func
         else:
             raise NotImplementedError
@@ -46,58 +47,51 @@ class HsmTest(Factory):
         if not self.foo:
             self.foo = 1
             return self.handled(e)
-    
-    def handle_entry_in_exiting(self, e):
-        self.running = False
-        async_hsm.Framework.stop()
-        return self.handled(e)
 
 
 hsm = HsmDescription("s2", "setup", ["a", "b", "c", "d", "e", "f", "g", "h", "i", "t"], [
-    State("s", None,
-        [Catch("INIT", "goto_s11"),
-         Catch("i", "handle_i_in_s"),
-         Catch("e", "goto_s11"),
-         Catch("t", "goto_exiting")]),
-    State("s1", "s",
-        [Catch("INIT", "goto_s11"),
-         Catch("a", "goto_s1"),
-         Catch("b", "goto_s11"),
-         Catch("c", "goto_s2"),
-         Catch("d", "handle_d_in_s1"),
-         Catch("f", "goto_s211"),
-         Catch("i", "handled")]),
-    State("s11", "s1",
-        [Catch("d", "handle_d_in_s11"),
-         Catch("g", "goto_s211"),
-         Catch("h", "goto_s")]),
-    State("s2", "s",
-        [Catch("INIT", "goto_s211"),
-         Catch("c", "goto_s1"),
-         Catch("f", "goto_s11"),
-         Catch("i", "handle_i_in_s2")]),
-    State("s21", "s2",
-        [Catch("INIT", "goto_s211"),
-         Catch("a", "goto_s21"),
-         Catch("b", "goto_s211"),
-         Catch("g", "goto_s1")]),
-    State("s211", "s21",
-        [Catch("d", "goto_s21"),
-         Catch("h", "goto_s")]),
-    State("exiting", None,
-        [Catch("ENTRY", "handle_entry_in_exiting"),
-         Catch("h", "goto_s")]),
+    State("s", None, [Catch("INIT", "goto_s11"),
+                      Catch("i", "handle_i_in_s"),
+                      Catch("e", "goto_s11"),
+                      Catch("t", "goto__exit")]),
+    State("s1", "s", [
+        Catch("INIT", "goto_s11"),
+        Catch("a", "goto_s1"),
+        Catch("b", "goto_s11"),
+        Catch("c", "goto_s2"),
+        Catch("d", "handle_d_in_s1"),
+        Catch("f", "goto_s211"),
+        Catch("i", "handled")
+    ]),
+    State("s11", "s1", [Catch("d", "handle_d_in_s11"), Catch("g", "goto_s211"),
+                        Catch("h", "goto_s")]),
+    State("s2", "s", [Catch("INIT", "goto_s211"),
+                      Catch("c", "goto_s1"),
+                      Catch("f", "goto_s11"),
+                      Catch("i", "handle_i_in_s2")]),
+    State("s21", "s2", [Catch("INIT", "goto_s211"),
+                        Catch("a", "goto_s21"),
+                        Catch("b", "goto_s211"),
+                        Catch("g", "goto_s1")]),
+    State("s211", "s21", [Catch("d", "goto_s21"), Catch("h", "goto_s")]),
 ])
 
-if __name__ == "__main__":
+
+async def main():
+    import signal
     async_hsm.Spy.enable_spy(Spy)
     HsmTest.build_hsm(hsm)
-    machine = HsmTest() 
+    machine = HsmTest()
     Spy.on_framework_add(machine)
     interactive = True
     if interactive:
+
+        def intrup(*a):
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGINT, intrup)
         machine.init()
-        while machine.running:
+        while not machine.terminated:
             sig_name = input('\tEvent --> ')
             try:
                 sig = getattr(async_hsm.Signal, sig_name)
@@ -115,4 +109,8 @@ if __name__ == "__main__":
         for sig in seq:
             event = async_hsm.Event(getattr(async_hsm.Signal, sig), None)
             machine.postFIFO(event)
-        async_hsm.run_forever()
+        await Framework.done()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

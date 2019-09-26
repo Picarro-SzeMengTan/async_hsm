@@ -49,10 +49,12 @@ class Countdown(async_hsm.Ahsm):
         return self.super(self.top)
 
 
+async def main():
+    sl = Countdown(10)
+    sl.start(0)
+    await async_hsm.Framework.done()
+
 if __name__ == "__main__":
     # from SelectiveSpy import SelectiveSpy as Spy
     # async_hsm.Spy.enable_spy(Spy)
-    sl = Countdown(10)
-    sl.start(0)
-
-    async_hsm.run_forever()
+    asyncio.run(main())

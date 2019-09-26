@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 """UDP Relay AHSM for async_hsm
 This is a demonstration program that
 relays UDP messages to/from the async_hsm framework.
@@ -20,7 +19,6 @@ import asyncio
 
 import async_hsm
 
-
 UDP_PORT = 4242
 
 
@@ -36,7 +34,6 @@ class UdpServer:
 
 
 class UdpRelayAhsm(async_hsm.Ahsm):
-
     @async_hsm.state
     def _initial(self, event):
         async_hsm.Framework.subscribe("NET_ERR", self)
@@ -47,7 +44,6 @@ class UdpRelayAhsm(async_hsm.Ahsm):
         server = loop.create_datagram_endpoint(UdpServer, local_addr=("localhost", UDP_PORT))
         self.transport, self.protocol = loop.run_until_complete(server)
         return self.tran(self._waiting)
-
 
     @async_hsm.state
     def _waiting(self, event):
@@ -65,7 +61,6 @@ class UdpRelayAhsm(async_hsm.Ahsm):
             return self.tran(self._exiting)
 
         return self.super(self.top)
-
 
     @async_hsm.state
     def _relaying(self, event):
@@ -97,7 +92,6 @@ class UdpRelayAhsm(async_hsm.Ahsm):
 
         return self.super(self.top)
 
-
     @async_hsm.state
     def _exiting(self, event):
         sig = event.signal
@@ -107,11 +101,10 @@ class UdpRelayAhsm(async_hsm.Ahsm):
             return self.handled(event)
         return self.super(self.top)
 
-
     # Callbacks interact via messaging
     @staticmethod
     def on_datagram(data, addr):
-        e = async_hsm.Event(async_hsm.Signal.NET_RXD, (data,addr))
+        e = async_hsm.Event(async_hsm.Signal.NET_RXD, (data, addr))
         async_hsm.Framework.publish(e)
 
     @staticmethod
@@ -120,10 +113,13 @@ class UdpRelayAhsm(async_hsm.Ahsm):
         async_hsm.Framework.publish(e)
 
 
-if __name__ == "__main__":
+async def main():
     from async_hsm.SimpleSpy import SimpleSpy
     async_hsm.Spy.enable_spy(SimpleSpy)
     relay = UdpRelayAhsm()
     relay.start(0)
+    await async_hsm.Framework.done()
 
-    async_hsm.run_forever()
+
+if __name__ == "__main__":
+    asyncio.run(main())

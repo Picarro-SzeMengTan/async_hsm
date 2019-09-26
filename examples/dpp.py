@@ -174,7 +174,7 @@ class Philo(async_hsm.Ahsm):
         return status
 
 
-def main():
+async def main():
     global philo
 
     table = Table()
@@ -186,8 +186,8 @@ def main():
         p.start(n+1)
         philo.append(p)
 
-    async_hsm.run_forever()
+    await async_hsm.Framework.done()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

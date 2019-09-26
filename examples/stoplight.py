@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 
-
 import asyncio
 
 import async_hsm
 
 
 class Stoplight(async_hsm.Ahsm):
-
     @async_hsm.state
     def _initial(self, event):
         print("Stoplight _initial")
@@ -16,7 +14,6 @@ class Stoplight(async_hsm.Ahsm):
         te.postEvery(self, 2.0)
 
         return self.tran(self._red)
-
 
     @async_hsm.state
     def _red(self, event):
@@ -34,7 +31,6 @@ class Stoplight(async_hsm.Ahsm):
             return self.handled(event)
 
         return self.super(self.top)
-
 
     @async_hsm.state
     def _green(self, event):
@@ -54,10 +50,13 @@ class Stoplight(async_hsm.Ahsm):
         return self.super(self.top)
 
 
-if __name__ == "__main__":
+async def main():
     # from async_hsm.SimpleSpy import SimpleSpy
     # async_hsm.Spy.enable_spy(SimpleSpy)
     sl = Stoplight()
     sl.start(0)
+    await async_hsm.Framework.done()
 
-    async_hsm.run_forever()
+
+if __name__ == "__main__":
+    asyncio.run(main())

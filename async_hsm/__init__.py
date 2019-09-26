@@ -1,10 +1,11 @@
 import asyncio
 import collections
-from copy import copy
 import math
 import signal
 import sys
+import traceback
 import typing
+from copy import copy
 from functools import wraps
 
 import attr
@@ -119,6 +120,8 @@ Signal.register("EMPTY")  # 0
 Signal.register("ENTRY")  # 1
 Signal.register("EXIT")  # 2
 Signal.register("INIT")  # 3
+Signal.register("TERMINATE")  # 4
+Signal.register("ERROR")  # 5
 
 # Signals that mirror POSIX signals
 Signal.register("SIGINT")  # (i.e. Ctrl+C)
@@ -138,13 +141,15 @@ Event.EMPTY = Event(Signal.EMPTY, None)
 Event.ENTRY = Event(Signal.ENTRY, None)
 Event.EXIT = Event(Signal.EXIT, None)
 Event.INIT = Event(Signal.INIT, None)
+Event.TERMINATE = Event(Signal.TERMINATE, None)
+Event.ERROR = Event(Signal.ERROR, None)
 
 # Events for POSIX signals
 Event.SIGINT = Event(Signal.SIGINT, None)  # (i.e. Ctrl+C)
 Event.SIGTERM = Event(Signal.SIGTERM, None)  # (i.e. kill <pid>)
 
 # The order of this tuple MUST match their respective signals
-Event.reserved = (Event.EMPTY, Event.ENTRY, Event.EXIT, Event.INIT)
+Event.reserved = (Event.EMPTY, Event.ENTRY, Event.EXIT, Event.INIT, Event.TERMINATE, Event.ERROR)
 
 
 def state(func):
@@ -155,7 +160,6 @@ def state(func):
     to determine which methods inside a class are actually states.
     Other uses of the attribute may come in the future.
     """
-
     @wraps(func)
     def func_wrap(self, evt):
         result = func(self, evt)
@@ -189,6 +193,10 @@ class Hsm(object):
         # that will be called whenever a message is sent to this Hsm.
         # We initialize this to self.top, the default message handler
         self.state = self.top
+        self.state_receiving_dispatch = None
+        # The terminated flag indicates that this state machine is
+        #  finished. Usually set in the _exit state.
+        self.terminated = False
 
         # Async_hsm differs from QP here in that we hardcode
         # the initial state to be "_initial"
@@ -198,6 +206,15 @@ class Hsm(object):
         to implement its own initial state.
         """
         raise NotImplementedError
+
+    @state
+    def _exit(self, event):
+        """Default exit state handler that sets terminated attribute"""
+        sig = event.signal
+        if sig == Signal.ENTRY:
+            self.terminated = True
+            return self.handled(event)
+        return self.super(self.top)
 
     # Helper functions to process reserved events through the current state
     def trig(self, state_func, signal):
@@ -224,7 +241,23 @@ class Hsm(object):
             self.state = getattr(self, superState) if isinstance(superState, str) else superState
         return Hsm.RET_SUPER  # p. 158
 
-    @state
+    def run_async(self, cor):
+        # Run an asynchronous task in the coroutine cor and post an ERROR
+        #  event if it throws an exception
+        async def wrapped_cor():
+            try:
+                await cor
+            except Exception as e:
+                self.postFIFO(
+                    Event(Signal.ERROR, {
+                        "exc": e,
+                        "traceback": traceback.format_exc(),
+                        "location": self.__class__.__name__,
+                        "name": cor.__name__
+                    }))
+
+        asyncio.create_task(wrapped_cor())
+
     def top(self, event):
         """This is the default state handler.
         This handler ignores all signals except
@@ -338,6 +371,7 @@ class Hsm(object):
 
         # Save the current state
         t = self.state
+        self.state_receiving_dispatch = t
 
         # Proceed to superstates if event is not handled, we wish to find the superstate
         #  (if any) that does handle the event and to record the path to that state
@@ -369,6 +403,7 @@ class Hsm(object):
 
         # Restore the state
         self.state = t
+        self.state_receiving_dispatch = None
 
 
 class Framework(object):
@@ -380,7 +415,10 @@ class Framework(object):
     - the table subscriptions to events
     """
 
-    _event_loop = asyncio.get_event_loop()
+    # The event loop is accessed through the get_event_loop method. The private
+    #  attribute __event_loop is initialized the first time get_event_loop is called
+    #  and is subsequently returned by the get_event_loop method 
+    __event_loop = None
 
     # The Framework maintains a registry of Ahsms in a list.
     _ahsm_registry = []
@@ -393,23 +431,55 @@ class Framework(object):
     # The dict's key is the priority (integer) and the value is the Ahsm.
     _priority_dict = {}
 
-    # The Framework maintains a group of TimeEvents in a dict.  The next
-    # expiration of the TimeEvent is the key and the event is the value.
-    # Only the event with the next expiration time is scheduled for the
-    # timeEventCallback().  As TimeEvents are added and removed, the scheduled
-    # callback must be re-evaluated.  Periodic TimeEvents should only have
-    # one entry in the dict: the next expiration.  The timeEventCallback() will
-    # add a Periodic TimeEvent back into the dict with its next expiration.
-    _time_events = {}
-
-    # When a TimeEvent is scheduled for the timeEventCallback(),
-    # a handle is kept so that the callback may be cancelled if necessary.
-    _tm_event_handle = None
+    # The Framework maintains pending TimeEvents in a dict.
+    #  The TimeEvent is the key and the handle to the callback
+    #  is the value. This is useful for cancelling the event if
+    #  necessary. A time event can appear at most once within
+    #  this dictionary, since it cannot be scheduled while it ia
+    #
+    #  A nonperiodic time event will be removed from
+    #  the dictionary when it expires, whereas periodic TimeEvents
+    #  re-enqueue themselves and update their handles whenever
+    #  they occur.
+    _time_event_handles = {}
 
     # The Subscriber Table is a dictionary.  The keys are signals.
     # The value for each key is a list of Ahsms that are subscribed to the
     # signal.  An Ahsm may subscribe to a signal at any time during runtime.
     _subscriber_table = {}
+
+    # The terminate event is accessed through the get_terminate_event method. The private
+    #  attribute __terminate_event is initialized the first time get_terminate_event is called
+    #  and is subsequently returned by the get_terminate_event method 
+    # The event is set once all the AHSMs in the framework have set their terminated attribute, 
+    #  which is usually done in their _exit states
+    __terminate_event = None
+
+    @staticmethod
+    def get_event_loop():
+        # The first time this is called, we get the current event loop and assign it to the
+        #  private variable __event_loop. Subsequently, return this loop. Doing this allows us
+        #  use asyncio.run in conjunction with async_hsm, since asyncio.run creates a new
+        #  event loop, and needs to be run before we try to call get_event_loop
+        if Framework.__event_loop is None:
+            Framework.__event_loop = asyncio.get_event_loop()
+            # try:
+            #     Framework.__event_loop.add_signal_handler(signal.SIGINT, lambda: Framework.stop())
+            #     Framework.__event_loop.add_signal_handler(signal.SIGTERM, lambda: Framework.stop())
+            #     Framework.__event_loop.add_signal_handler(29, Framework.print_info)
+            # except NotImplementedError:
+            #     pass
+        return Framework.__event_loop
+
+    @staticmethod
+    def get_terminate_event():
+        # The first time this is called, we get the current event loop and assign it to the
+        #  private variable __event_loop. Subsequently, return this loop. Doing this allows us
+        #  use asyncio.run in conjunction with async_hsm, since asyncio.run creates a new
+        #  event loop, and needs to be run before we try to call get_event_loop
+        if Framework.__terminate_event is None:
+            Framework.__terminate_event = asyncio.Event()
+        return Framework.__terminate_event
 
     @staticmethod
     def post(event, act):
@@ -440,7 +510,7 @@ class Framework(object):
             for act in Framework._subscriber_table[event.signal]:
                 act.postFIFO(event)
         # Run to completion
-        Framework._event_loop.call_soon_threadsafe(Framework.run)
+        Framework.get_event_loop().call_soon_threadsafe(Framework.run)
 
     @staticmethod
     def subscribe(signame, act):
@@ -456,115 +526,59 @@ class Framework(object):
 
     @staticmethod
     def addTimeEvent(tm_event, delta):
-        """Adds the TimeEvent to the list of time events in the Framework.
+        """Adds the TimeEvent to the collection of time events in the Framework.
         The event will fire its signal (to the TimeEvent's target Ahsm)
         after the delay, delta.
         """
-        expiration = Framework._event_loop.time() + delta
+        expiration = Framework.get_event_loop().time() + delta
         Framework.addTimeEventAt(tm_event, expiration)
 
     @staticmethod
     def addTimeEventAt(tm_event, abs_time):
-        """Adds the TimeEvent to the list of time events in the Framework.
+        """Adds the TimeEvent to the collection of time events in the Framework.
         The event will fire its signal (to the TimeEvent's target Ahsm)
-        at the given absolute time (_event_loop.time()).
+        at the given absolute time (Framework.get_event_loop().time()).
         """
-        assert tm_event not in Framework._time_events.values()
-        Framework._insortTimeEvent(tm_event, abs_time)
+        assert tm_event not in Framework._time_event_handles
+        Framework._scheduleTimeEvent(tm_event, abs_time)
 
     @staticmethod
-    def _insortTimeEvent(tm_event, expiration):
-        """Inserts a TimeEvent into the list of time events,
-        sorted by the next expiration of the timer.
-        If the expiration time matches an existing expiration,
-        we add the smallest amount of time to the given expiration
-        to avoid a key collision in the Dict
-        and make the identically-timed events fire in a FIFO fashion.
+    def _scheduleTimeEvent(tm_event, expiration):
+        """Schedule the TimeEvent using call_at
         """
-        # If the event is to happen in the past, post it now
-        now = Framework._event_loop.time()
-        if expiration < now:
-            tm_event.act.postFIFO(tm_event)
-            # TODO: if periodic, need to schedule next?
-
-        # If an event already occupies this expiration time,
-        # increase this event's expiration by the smallest measurable amount
-        while expiration in Framework._time_events.keys():
-            m, e = math.frexp(expiration)
-            expiration = (m + sys.float_info.epsilon) * 2**e
-        Framework._time_events[expiration] = tm_event
-
-        # If this is the only active TimeEvent, schedule its callback
-        if len(Framework._time_events) == 1:
-            Framework._tm_event_handle = Framework._event_loop.call_at(expiration, Framework.timeEventCallback, tm_event,
-                                                                       expiration)
-
-        # If there are other TimeEvents,
-        # check if this one should replace the scheduled one
-        else:
-            if expiration < min(Framework._time_events.keys()):
-                Framework._tm_event_handle.cancel()
-                Framework._tm_event_handle = Framework._event_loop.call_at(expiration, Framework.timeEventCallback, tm_event,
-                                                                           expiration)
+        Framework._time_event_handles[tm_event] = Framework.get_event_loop().call_at(expiration, Framework.timeEventCallback,
+                                                                                     tm_event, expiration)
 
     @staticmethod
     def removeTimeEvent(tm_event):
-        """Removes the TimeEvent from the list of active time events.
-        Cancels the TimeEvent's callback if there is one.
-        Schedules the next event's callback if there is one.
+        """Removes the TimeEvent from the dictionary of active time events, cancelling
+            it if it is pending
         """
-        for k, v in Framework._time_events.items():
-            if v is tm_event:
-
-                # If the event being removed is scheduled for callback,
-                # cancel and schedule the next event if there is one
-                if k == min(Framework._time_events.keys()):
-                    del Framework._time_events[k]
-                    if Framework._tm_event_handle:
-                        Framework._tm_event_handle.cancel()
-                    if len(Framework._time_events) > 0:
-                        next_expiration = min(Framework._time_events.keys())
-                        next_event = Framework._time_events[next_expiration]
-                        Framework._tm_event_handle = \
-                            Framework._event_loop.call_at(
-                                next_expiration, Framework.timeEventCallback,
-                                next_event, next_expiration)
-                    else:
-                        Framework._tm_event_handle = None
-                else:
-                    del Framework._time_events[k]
-                break
+        if tm_event in Framework._time_event_handles:
+            Framework._time_event_handles[tm_event].cancel()
+            del Framework._time_event_handles[tm_event]
 
     @staticmethod
     def timeEventCallback(tm_event, expiration):
         """The callback function for all TimeEvents.
         Posts the event to the event's target Ahsm.
-        If the TimeEvent is periodic, re-insort the event
-        in the list of active time events.
+        If the TimeEvent is periodic, reschedule its next occurrence.
         """
-        assert expiration in Framework._time_events.keys(), ("Exp:%d _time_events.keys():%s" %
-                                                             (expiration, Framework._time_events.keys()))
+        assert tm_event in Framework._time_event_handles, ("Exp:%f _time_event_handles.keys():%s" %
+                                                           (expiration, Framework._time_event_handles.keys()))
 
-        # Remove this expired TimeEvent from the active list
-        del Framework._time_events[expiration]
-        Framework._tm_event_handle = None
+        # Remove this expired TimeEvent from the dictionary
+        del Framework._time_event_handles[tm_event]
 
         # Post the event to the target Ahsm
         tm_event.act.postFIFO(tm_event)
 
         # If this is a periodic time event, schedule its next expiration
         if tm_event.interval > 0:
-            Framework._insortTimeEvent(tm_event, expiration + tm_event.interval)
-
-        # If not set already and there are more events, set the next event callback
-        if (Framework._tm_event_handle is None and len(Framework._time_events) > 0):
-            next_expiration = min(Framework._time_events.keys())
-            next_event = Framework._time_events[next_expiration]
-            Framework._tm_event_handle = Framework._event_loop.call_at(next_expiration, Framework.timeEventCallback, next_event,
-                                                                       next_expiration)
+            Framework._scheduleTimeEvent(tm_event, expiration + tm_event.interval)
 
         # Run to completion
-        Framework._event_loop.call_soon_threadsafe(Framework.run)
+        Framework.get_event_loop().call_soon_threadsafe(Framework.run)
 
     @staticmethod
     def add(act):
@@ -579,41 +593,74 @@ class Framework(object):
     def run():
         """Dispatches an event to the highest priority Ahsm
         until all event queues are empty (i.e. Run To Completion).
+        If any exception occurs in the state handler functions called
+        while performing ``dispatch``, post the ERROR event on the FIFO
+        of the state machine, with information about the exception, a traceback
+        and the class name in which the exception occured, so that it can be 
+        dealt with appropriately. 
         """
-
         def getPriority(x):
             return x.priority
 
         while True:
             allQueuesEmpty = True
             sorted_acts = sorted(Framework._ahsm_registry, key=getPriority)
+            terminate = True
             for act in sorted_acts:
+                if act.terminated:
+                    continue
+                terminate = False
                 if act.has_msgs():
                     event_next = act.pop_msg()
-                    act.dispatch(event_next)
+                    try:
+                        act.dispatch(event_next)
+                    except Exception as e:
+                        act.postFIFO(
+                            Event(Signal.ERROR, {
+                                "exc": e,
+                                "traceback": traceback.format_exc(),
+                                "location": act.__class__.__name__
+                            }))
                     allQueuesEmpty = False
                     break
+            if terminate:
+                Framework.get_terminate_event().set()
             if allQueuesEmpty:
                 return
 
     @staticmethod
     def stop():
-        """EXITs all Ahsms and stops the event loop.
+        """EXITs all Ahsms and sets the _terminate_event flag.
         """
         # Disable the timer callback
-        if Framework._tm_event_handle:
-            Framework._tm_event_handle.cancel()
-            Framework._tm_event_handle = None
+        for tm_event in Framework._time_event_handles:
+            Framework._time_event_handles[tm_event].cancel()
 
-        # Post SIGTERM to all Ahsms so they execute their EXIT handler
+        # Post TERMINATE to all Ahsms so they execute their EXIT handler
         for act in Framework._ahsm_registry:
-            Framework.post(Event.SIGTERM, act)
+            Framework.post(Event.TERMINATE, act)
 
         # Run to completion so each Ahsm will process SIGTERM
         Framework.run()
-        Framework._event_loop.stop()
+        Framework.get_terminate_event().set()
+        # Framework.get_event_loop().stop()
+        # Spy.on_framework_stop()
 
-        Spy.on_framework_stop()
+    @staticmethod
+    def get_info():
+        """Gets the name and current state
+        of each actor in the framework.
+        """
+        result = {}
+        for act in Framework._ahsm_registry:
+            if act.state_receiving_dispatch is not None:
+                result[act.__class__.__name__] = {
+                    "state_handling_event": act.state.__name__,
+                    "state_receiving_dispatch": act.state_receiving_dispatch.__name__
+                }
+            else:
+                result[act.__class__.__name__] = {"state": act.state.__name__}
+        return result
 
     @staticmethod
     def print_info():
@@ -621,44 +668,38 @@ class Framework(object):
         of each actor in the framework.
         Meant to be called when ctrl+T (SIGINFO/29) is issued.
         """
-        for act in Framework._ahsm_registry:
-            print(act.__class__.__name__, act.state.__name__)
+        info_dict = Framework.get_info()
+        for actor in info_dict:
+            print(actor, info_dict[actor])
 
-    # Bind a useful set of POSIX signals to the handler
-    # (ignore a NotImplementedError on Windows)
-    try:
-        _event_loop.add_signal_handler(signal.SIGINT, lambda: Framework.stop())
-        _event_loop.add_signal_handler(signal.SIGTERM, lambda: Framework.stop())
-        _event_loop.add_signal_handler(29, print_info.__func__)
-    except NotImplementedError:
-        pass
+    signal.signal(signal.SIGINT, lambda *args: Framework.stop())
+    signal.signal(signal.SIGTERM, lambda *args: Framework.stop())
 
-
-def run_forever():
-    """Runs the asyncio event loop with and
-    ensures state machines are exited upon a KeyboardInterrupt.
-    """
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_forever()
-    except KeyboardInterrupt:
-        Framework.stop()
-    loop.close()
-
+    @staticmethod
+    async def done():
+        """Await this coroutine to wait for all state machines to terminate"""
+        await Framework.get_terminate_event().wait()
 
 class Ahsm(Hsm):
     """An Augmented Hierarchical State Machine (AHSM); a.k.a. ActiveObject/AO.
     Adds a priority, message queue and methods to work with the queue.
     """
-
     def start(self, priority):
         # must set the priority before Framework.add() which uses the priority
         self.priority = priority
         Framework.add(self)
         self.mq = collections.deque()
-        self.init()
+        try:
+            self.init()
+        except Exception as e:
+            self.postFIFO(
+                Event(Signal.ERROR, {
+                    "exc": e,
+                    "traceback": traceback.format_exc(),
+                    "location": self.__class__.__name__
+                }))
         # Run to completion
-        Framework._event_loop.call_soon_threadsafe(Framework.run)
+        Framework.get_event_loop().call_soon_threadsafe(Framework.run)
 
     def postLIFO(self, evt):
         self.mq.append(evt)
@@ -692,6 +733,7 @@ class Factory(Ahsm):
             for sig in signal_list:
                 Framework.subscribe(sig, self)
             return self.tran(initial_state)
+
         handler = state(copy(_initial))
         handler.__name__ = "_initial"
         handler.__qualname__ = handler.__name__
@@ -708,6 +750,7 @@ class Factory(Ahsm):
                 if ret_val is not None:
                     return ret_val
             return self.super(parent)
+
         handler = state(copy(state_handler))
         handler.__name__ = name
         handler.__qualname__ = handler.__name__
@@ -735,7 +778,6 @@ class TimeEvent(object):
     A one-shot TimeEvent is created by calling either postAt() or postIn().
     A periodic TimeEvent is created by calling the postEvery() method.
     """
-
     def __init__(self, signame):
         assert type(signame) == str
         self.signal = Signal.register(signame)

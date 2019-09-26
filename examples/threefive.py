@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import asyncio
+
 import async_hsm
 
 
@@ -57,15 +59,17 @@ class Five(async_hsm.Ahsm):
         return self.super(self.top)
 
 
-if __name__ == "__main__":
+async def main():
     # Uncomment this line to get a visual execution trace (to demonstrate debugging)
     # from async_hsm.SimpleSpy import SimpleSpy
     # async_hsm.Spy.enable_spy(SimpleSpy)
 
     three = Three()
     five = Five()
-
     three.start(3)
     five.start(5)
+    await async_hsm.Framework.done()
 
-    async_hsm.run_forever()
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -42,7 +42,8 @@ class SimpleSpy(metaclass=SpyType):
     def on_state_handler_called(state, evt, result):
         if evt is not None and evt.signal not in [Signal.EMPTY]:
             if (result != Hsm.RET_SUPER) or evt.signal in [Signal.ENTRY, Signal.EXIT]:
-                __class__.logger(f"{__class__._state_names[state]}-{__class__._sig_names[evt.signal]};")
+                sep = "\n" if evt.signal not in [Signal.INIT, Signal.ENTRY, Signal.EXIT] else ""
+                __class__.logger(f"{sep}{__class__._state_names[state]}-{__class__._sig_names[evt.signal]}; ")
 
     @staticmethod
     def on_framework_add(act):
@@ -50,6 +51,6 @@ class SimpleSpy(metaclass=SpyType):
             if hasattr(state, "async_hsm_state"):
                 __class__._state_names[state] = name
 
-    @staticmethod
-    def on_hsm_dispatch_event(evt):
-        __class__.logger(f"\n<{__class__._sig_names[evt.signal]}> ")
+    #@staticmethod
+    #def on_hsm_dispatch_event(evt):
+    #    __class__.logger(f"\n<{__class__._sig_names[evt.signal]}> ")
