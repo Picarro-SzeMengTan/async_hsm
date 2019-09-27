@@ -121,10 +121,6 @@ Signal.register("INIT")  # 3
 Signal.register("TERMINATE")  # 4
 Signal.register("ERROR")  # 5
 
-# Signals that mirror POSIX signals
-Signal.register("SIGINT")  # (i.e. Ctrl+C)
-Signal.register("SIGTERM")  # (i.e. kill <pid>)
-
 Event = collections.namedtuple("Event", ["signal", "value"])
 
 Event.__doc__ = """Events are a tuple of (signal, value) that are passed from
@@ -141,10 +137,6 @@ Event.EXIT = Event(Signal.EXIT, None)
 Event.INIT = Event(Signal.INIT, None)
 Event.TERMINATE = Event(Signal.TERMINATE, None)
 Event.ERROR = Event(Signal.ERROR, None)
-
-# Events for POSIX signals
-Event.SIGINT = Event(Signal.SIGINT, None)  # (i.e. Ctrl+C)
-Event.SIGTERM = Event(Signal.SIGTERM, None)  # (i.e. kill <pid>)
 
 # The order of this tuple MUST match their respective signals
 Event.reserved = (Event.EMPTY, Event.ENTRY, Event.EXIT, Event.INIT, Event.TERMINATE, Event.ERROR)
@@ -199,9 +191,10 @@ class Hsm(object):
         # The publish_errors flag affects how exceptions raised in this
         #  HSM are treated. The resulting Event with type Signal.ERROR
         #  may be published to the framework (if publish_errors is True)
-        #  or placed on the FIFO of just this Hsm (if publish_errors
-        #  is False)
-        self.publish_errors = True
+        #  or placed on the FIFO of this Hsm (if publish_errors is False)
+        # If the error is publised, it is necessary to use the subscribe
+        #  method to be informed when the error occurs.
+        self.publish_errors = False
         # Async_hsm differs from QP here in that we hardcode
         # the initial state to be "_initial"
 
@@ -213,7 +206,8 @@ class Hsm(object):
 
     @state
     def _exit(self, event):
-        """Default exit state handler that sets terminated attribute"""
+        """Default exit state handler that sets the terminated attribute of the
+            state machine. This may be overridden in a user's HSM class. """
         sig = event.signal
         if sig == Signal.ENTRY:
             self.terminated = True
@@ -266,20 +260,16 @@ class Hsm(object):
         asyncio.create_task(wrapped_cor())
 
     def top(self, event):
-        """This is the default state handler.
-        This handler ignores all signals except
-        the POSIX-like events, SIGINT/SIGTERM.
-        Handling SIGINT/SIGTERM here causes the Exit path
-        to be executed from the application's active state
-        to top/here.
-        The application may put something useful
-        or nothing at all in the Exit path.
+        """This is the default state handler. This handler ignores all signals except for Signal.TERMINATE and 
+        Signal.ERROR. These default actions can be overridden within a user-provided top level state.
+
+        The TERMINATE signal causes a transition to the state self._exit.
+        The ERROR signal does not cause a state transition, but prints a tracback message on the console.        
         """
-        # Handle the Posix-like events to force the HSM
-        # to execute its Exit path all the way to the top
-        if Event.SIGINT == event:
-            return Hsm.RET_HANDLED
-        if Event.SIGTERM == event:
+        if event.signal == Signal.TERMINATE:
+            return self.tran(self._exit)
+        elif event.signal == Signal.ERROR:
+            print(f"Exception {event.value['exc']}\n{event.value['traceback']}")
             return Hsm.RET_HANDLED
         # All other events are quietly ignored
         return Hsm.RET_IGNORED  # p. 165
@@ -684,8 +674,12 @@ class Framework(object):
 
     @staticmethod
     async def done():
-        """Await this coroutine to wait for all state machines to terminate"""
-        await Framework.get_terminate_event().wait()
+        """Await this coroutine to wait for all state machines to terminate. This is written
+        as a loop so that CTRL-C in Windows will be acted upon"""
+        while True:
+            if Framework.get_terminate_event().is_set():
+                break
+            await asyncio.sleep(0.5)
 
 
 class Ahsm(Hsm):
@@ -820,6 +814,3 @@ class TimeEvent(object):
         """
         self.act = None
         Framework.removeTimeEvent(self)
-
-
-from .VcdSpy import VcdSpy

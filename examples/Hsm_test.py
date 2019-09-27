@@ -148,13 +148,9 @@ async def main():
     Spy.enable_spy(SimpleSpy)
     s1 = HsmTest()
     SimpleSpy.on_framework_add(s1)
-    interactive = True
+    interactive = False
     if interactive:
-
-        def intrup(*a):
-            raise KeyboardInterrupt
-
-        signal.signal(signal.SIGINT, intrup)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
         s1.init()
         while not s1.terminated:
             sig_name = input('\tEvent --> ')

@@ -7,8 +7,10 @@ import signal
 class HsmExample1(Ahsm):
     @state
     def _initial(self, e):
-        Signal.register("E1")
-        Signal.register("E2")
+        self.publish_errors = False
+        Framework.subscribe("E1", self)
+        Framework.subscribe("E2", self)
+        # Framework.subscribe("TERMINATE", self)
         return self.tran(self.state1)
 
     @state
@@ -42,7 +44,7 @@ class HsmExample1(Ahsm):
             return self.handled(e)
         elif sig == Signal.E1:
             print("Event 1 action 2")
-            1 / 0
+            1/0
             return self.tran(self.state1)
         elif sig == Signal.E2:
             print("Event 2 action 2")
@@ -67,22 +69,20 @@ async def main():
     # SimpleSpy.on_framework_add(hsm)
     seq = ['E1', 'E2', 'E1', 'E2']
     hsm.start(0)
-    while not hsm.terminated:
-        if seq:
-            sig_name = seq.pop(0)
-            print(f'\tEvent --> {sig_name}')
-        else:
-            sig_name = input('\tEvent --> ')
-        try:
-            sig = getattr(Signal, sig_name)
-            hsm.postFIFO(Event(sig, None))
-        except LookupError:
-            print("\nInvalid signal name", end="")
-            continue
-        while hsm.has_msgs():
-            event = hsm.pop_msg()
-            hsm.dispatch(event)
-    print("\nTerminated")
+
+    for sig_name in seq:
+        sig = getattr(Signal, sig_name)
+        print(f'\tEvent --> {sig_name}')
+        Framework.publish(Event(sig, None))
+        # Allow other tasks to run
+        await asyncio.sleep(0)
+
+    # Wait for CTRL-C to signal TERMINATE to all the HSMs. If we want to
+    # automatically terminate them, we can publish the TERMINATE event, but
+    # it is then necessary include Framework.subscribe("TERMINATE") in
+    # _initial above
+     
+    # Framework.publish(Event.TERMINATE)
     await Framework.done()
 
 if __name__ == "__main__":

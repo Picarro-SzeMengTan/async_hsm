@@ -42,7 +42,6 @@ class HsmExample1(Ahsm):
             return self.handled(e)
         elif sig == Signal.E1:
             print("Event 1 action 2")
-            1 / 0
             return self.tran(self.state1)
         elif sig == Signal.E2:
             print("Event 2 action 2")
@@ -65,24 +64,16 @@ async def main():
     hsm = HsmExample1()
     # Spy.enable_spy(SimpleSpy)
     # SimpleSpy.on_framework_add(hsm)
-    seq = ['E1', 'E2', 'E1', 'E2']
     hsm.start(0)
     while not hsm.terminated:
-        if seq:
-            sig_name = seq.pop(0)
-            print(f'\tEvent --> {sig_name}')
-        else:
-            sig_name = input('\tEvent --> ')
+        sig_name = input('\tEvent --> ')
         try:
             sig = getattr(Signal, sig_name)
-            hsm.postFIFO(Event(sig, None))
         except LookupError:
             print("\nInvalid signal name", end="")
             continue
-        while hsm.has_msgs():
-            event = hsm.pop_msg()
-            hsm.dispatch(event)
-    print("\nTerminated")
+        event = Event(sig, None)
+        hsm.dispatch(event)
     await Framework.done()
 
 if __name__ == "__main__":
