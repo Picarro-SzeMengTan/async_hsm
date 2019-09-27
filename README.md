@@ -25,7 +25,7 @@ The workaround is to inject an event to awake the event loop.
 
 ## Release History
 
-2018/07/11  0.2.0
+2019/07/11  0.2.0
 - Renamed package as async_hsm. 
 
 - The algorithm for traversing the hierarchical state machine has been 
